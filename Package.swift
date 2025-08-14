@@ -7,14 +7,16 @@ import PackageDescription
 var dependencies: [Package.Dependency] = [
     .package(url: "https://github.com/apple/swift-system.git", from: "1.0.0"),
     .package(url: "https://github.com/apple/swift-log.git", from: "1.5.0"),
-    .package(url: "https://github.com/mattt/eventsource.git", from: "1.1.0")
+    .package(url: "https://github.com/mattt/eventsource.git", from: "1.1.0"),
+    .package(url: "https://github.com/loopwork-ai/JSONSchema.git", from: "1.3.0"),
 ]
 
 // Target dependencies needed on all platforms
 var targetDependencies: [Target.Dependency] = [
     .product(name: "SystemPackage", package: "swift-system"),
     .product(name: "Logging", package: "swift-log"),
-    .product(name: "EventSource", package: "eventsource", condition: .when(platforms: [.macOS, .iOS, .tvOS, .visionOS, .watchOS]))
+    .product(name: "EventSource", package: "eventsource", condition: .when(platforms: [.macOS, .iOS, .tvOS, .visionOS, .watchOS])),
+    .product(name: "JSONSchema", package: "JSONSchema"),
 ]
 
 let package = Package(
