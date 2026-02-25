@@ -561,7 +561,7 @@ import Logging
             messageWithNewline.append(UInt8(ascii: "\n"))
 
             // Use a local actor-isolated variable to track continuation state
-            var sendContinuationResumed = false
+            let sendContinuationTracker = ContinuationTracker()
 
             try await withCheckedThrowingContinuation {
                 [weak self] (continuation: CheckedContinuation<Void, Swift.Error>) in
@@ -578,8 +578,7 @@ import Logging
                         guard let self = self else { return }
 
                         Task { @MainActor in
-                            if !sendContinuationResumed {
-                                sendContinuationResumed = true
+                            if sendContinuationTracker.tryResume() {
                                 if let error = error {
                                     self.logger.error("Send error: \(error)")
 
@@ -796,7 +795,7 @@ import Logging
         /// - Returns: The received data chunk
         /// - Throws: Network errors or transport failures
         private func receiveData() async throws -> Data {
-            var receiveContinuationResumed = false
+            let receiveContinuationTracker = ContinuationTracker()
 
             return try await withCheckedThrowingContinuation {
                 [weak self] (continuation: CheckedContinuation<Data, Swift.Error>) in
@@ -809,8 +808,7 @@ import Logging
                 connection.receive(minimumIncompleteLength: 1, maximumLength: maxLength) {
                     content, _, isComplete, error in
                     Task { @MainActor in
-                        if !receiveContinuationResumed {
-                            receiveContinuationResumed = true
+                        if receiveContinuationTracker.tryResume() {
                             if let error = error {
                                 continuation.resume(throwing: MCPError.transportError(error))
                             } else if let content = content {
@@ -843,6 +841,19 @@ import Logging
             let nsError = self as NSError
             return nsError.code == 57  // Socket is not connected (EHOSTUNREACH or ENOTCONN)
                 || nsError.code == 54  // Connection reset by peer (ECONNRESET)
+        }
+    }
+
+    final class ContinuationTracker: @unchecked Sendable {
+        private let lock = NSLock()
+        private var isResumed = false
+        
+        func tryResume() -> Bool {
+            lock.lock()
+            defer { lock.unlock() }
+            if isResumed { return false }
+            isResumed = true
+            return true
         }
     }
 #endif
