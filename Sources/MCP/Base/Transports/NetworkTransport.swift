@@ -323,6 +323,14 @@ import Logging
             // Wait for connection to be ready
             try await withCheckedThrowingContinuation {
                 [weak self] (continuation: CheckedContinuation<Void, Swift.Error>) in
+                // Wrap the continuation so it can be resumed at most once for this
+                // specific connect() call. Reconnection resets the shared
+                // `connectionContinuationResumed` flag and reuses the same
+                // connection, so a late state-update callback captured by a
+                // previous connect() could otherwise resume an already-resumed
+                // continuation and trip "CONTINUATION MISUSE". This makes any
+                // such second resume a no-op without changing behavior.
+                let continuation = OneShotContinuation(continuation)
                 guard let self = self else {
                     continuation.resume(throwing: MCPError.internalError("Transport deallocated"))
                     return
@@ -359,7 +367,7 @@ import Logging
         /// Handles when the connection reaches the ready state
         ///
         /// - Parameter continuation: The continuation to resume when connection is ready
-        private func handleConnectionReady(continuation: CheckedContinuation<Void, Swift.Error>)
+        private func handleConnectionReady(continuation: OneShotContinuation)
             async
         {
             if !connectionContinuationResumed {
@@ -449,7 +457,7 @@ import Logging
         ///   - error: The error that caused the connection to fail
         ///   - continuation: The continuation to resume with the error
         private func handleConnectionFailed(
-            error: Swift.Error, continuation: CheckedContinuation<Void, Swift.Error>
+            error: Swift.Error, continuation: OneShotContinuation
         ) async {
             if !connectionContinuationResumed {
                 connectionContinuationResumed = true
@@ -466,7 +474,7 @@ import Logging
         /// Handles connection cancellation
         ///
         /// - Parameter continuation: The continuation to resume with cancellation error
-        private func handleConnectionCancelled(continuation: CheckedContinuation<Void, Swift.Error>)
+        private func handleConnectionCancelled(continuation: OneShotContinuation)
             async
         {
             if !connectionContinuationResumed {
@@ -489,7 +497,7 @@ import Logging
         ///   - context: The context of the reconnection (for logging)
         private func handleReconnection(
             error: Swift.Error,
-            continuation: CheckedContinuation<Void, Swift.Error>,
+            continuation: OneShotContinuation,
             context: String
         ) async {
             if !isStopping,
@@ -854,6 +862,36 @@ import Logging
             if isResumed { return false }
             isResumed = true
             return true
+        }
+    }
+
+    /// Wraps a `CheckedContinuation` so that it can be resumed at most once.
+    ///
+    /// `NetworkTransport.connect()` guards its continuation with a single shared
+    /// `connectionContinuationResumed` flag that is reset on every reconnection.
+    /// Because the same underlying connection is reused, a state-update callback
+    /// scheduled by a previous `connect()` can run after the flag has been reset
+    /// and attempt to resume a continuation that was already resumed, which is a
+    /// fatal error. Each `connect()` call wraps its continuation in a fresh
+    /// instance of this type, so any stale or duplicate resume becomes a no-op.
+    final class OneShotContinuation: @unchecked Sendable {
+        private let tracker = ContinuationTracker()
+        private let continuation: CheckedContinuation<Void, Swift.Error>
+
+        init(_ continuation: CheckedContinuation<Void, Swift.Error>) {
+            self.continuation = continuation
+        }
+
+        func resume() {
+            if tracker.tryResume() {
+                continuation.resume()
+            }
+        }
+
+        func resume(throwing error: Swift.Error) {
+            if tracker.tryResume() {
+                continuation.resume(throwing: error)
+            }
         }
     }
 #endif
